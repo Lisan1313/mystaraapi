@@ -150,10 +150,10 @@ Responde como Mystara.
       model: 'gemini-2.5-flash',
       contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
       generationConfig: {
-        maxOutputTokens: 400, // Limitar para respuestas más rápidas
-        temperature: 0.8, // Balance entre creatividad y velocidad
-        topP: 0.9,
-        topK: 40,
+        maxOutputTokens: 250, // Reducido para respuestas más rápidas
+        temperature: 0.7, // Más determinista = más rápido
+        topP: 0.85,
+        topK: 30,
       }
     });
     
