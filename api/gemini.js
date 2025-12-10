@@ -1,6 +1,15 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const userLimits = new Map();
+// Rate limiting: userId → {count, resetTime}
+const rateLimits = new Map();
+
+// Límites por minuto
+const FREE_LIMIT = 10;
+const PREMIUM_LIMIT = 100;
+const RESET_INTERVAL = 60000; // 60 segundos
+
+// Contador global de requests para logs
+let globalRequestNumber = 0;
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -8,7 +17,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { userMessage, context, userId } = req.body;
+    const { userMessage, context, userId, isPremium } = req.body;
 
     if (!userMessage || userMessage.length > 1000) {
       return res.status(400).json({ error: 'Mensaje inválido' });
@@ -18,18 +27,75 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'User ID requerido' });
     }
 
-    // Rate limiting
-    const today = new Date().toISOString().split('T')[0];
-    const userKey = `${userId}-${today}`;
-    const currentCount = userLimits.get(userKey) || 0;
-    
-    if (currentCount >= 20) {
-      return res.status(429).json({ 
-        error: 'Límite diario alcanzado',
-        message: 'Has alcanzado el límite de 20 consultas diarias.',
-        isPremium: false
+    // Validar isPremium (debe ser boolean)
+    const userIsPremium = Boolean(isPremium);
+    const limit = userIsPremium ? PREMIUM_LIMIT : FREE_LIMIT;
+
+    // Rate limiting por minuto
+    const now = Date.now();
+    const userLimit = rateLimits.get(userId);
+
+    if (userLimit) {
+      // Si ha pasado el intervalo de reset, reiniciar contador
+      if (now >= userLimit.resetTime) {
+        userLimit.count = 0;
+        userLimit.resetTime = now + RESET_INTERVAL;
+      }
+
+      // Verificar si excedió el límite
+      if (userLimit.count >= limit) {
+        const resetIn = Math.ceil((userLimit.resetTime - now) / 1000);
+        
+        // Log del límite excedido
+        globalRequestNumber++;
+        console.log(JSON.stringify({
+          timestamp: new Date().toISOString(),
+          userId,
+          messageLength: userMessage.length,
+          isPremium: userIsPremium,
+          requestNumber: globalRequestNumber,
+          event: 'RATE_LIMIT_EXCEEDED',
+          limit,
+          currentCount: userLimit.count
+        }));
+
+        return res.status(429).json({
+          error: 'Límite alcanzado',
+          mensaje: userIsPremium 
+            ? 'Has alcanzado tu límite de consultas por minuto. Como usuario premium, puedes hacer hasta 100 consultas por minuto. Intenta de nuevo en unos momentos. ✨'
+            : 'Has alcanzado tu límite de consultas por minuto. Puedes hacer hasta 10 consultas por minuto. Considera actualizar a premium para obtener más consultas. ✨',
+          resetIn
+        });
+      }
+
+      // Incrementar contador
+      userLimit.count++;
+    } else {
+      // Primera petición del usuario
+      rateLimits.set(userId, {
+        count: 1,
+        resetTime: now + RESET_INTERVAL
       });
     }
+
+    // Limpiar map si crece demasiado
+    if (rateLimits.size > 10000) {
+      rateLimits.clear();
+    }
+
+    // Log de la petición
+    globalRequestNumber++;
+    const currentLimit = rateLimits.get(userId);
+    console.log(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      userId,
+      messageLength: userMessage.length,
+      isPremium: userIsPremium,
+      requestNumber: globalRequestNumber,
+      event: 'REQUEST_PROCESSED',
+      currentCount: currentLimit.count,
+      limit
+    }));
 
     // Filtro de seguridad
     const BLOCKED_PHRASES = [
@@ -82,16 +148,13 @@ Responde como Mystara.
     const result = await model.generateContent(fullPrompt);
     const responseText = result.response.text();
 
-    // Incrementar contador
-    userLimits.set(userKey, currentCount + 1);
-    if (userLimits.size > 10000) {
-      userLimits.clear();
-    }
+    const currentLimitData = rateLimits.get(userId);
+    const remainingRequests = limit - currentLimitData.count;
 
     return res.status(200).json({
       response: responseText,
-      remainingRequests: 20 - (currentCount + 1),
-      isPremium: false
+      remainingRequests: remainingRequests >= 0 ? remainingRequests : 0,
+      isPremium: userIsPremium
     });
 
   } catch (error) {
