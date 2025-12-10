@@ -148,7 +148,13 @@ Responde como Mystara.
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }]
+      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+      generationConfig: {
+        maxOutputTokens: 400, // Limitar para respuestas más rápidas
+        temperature: 0.8, // Balance entre creatividad y velocidad
+        topP: 0.9,
+        topK: 40,
+      }
     });
     
     // Extraer texto de la respuesta (igual que en la app)
