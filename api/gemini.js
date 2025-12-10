@@ -19,7 +19,7 @@ export default async function handler(req, res) {
   try {
     const { userMessage, context, userId, isPremium } = req.body;
 
-    if (!userMessage || userMessage.length > 1000) {
+    if (!userMessage || userMessage.length > 2000) {
       return res.status(400).json({ error: 'Mensaje inválido' });
     }
 
