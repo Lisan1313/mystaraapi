@@ -141,16 +141,27 @@ Responde como Mystara.
 
     `.trim();
 
-    // Llamar a Gemini con la nueva librería
-    // El cliente toma la API key automáticamente de process.env.GEMINI_API_KEY
-    const ai = new GoogleGenAI({});
+    // Llamar a Gemini con la nueva librería (igual que en la app)
+    const ai = new GoogleGenAI({ 
+      apiKey: process.env.GEMINI_API_KEY 
+    });
 
-    const result = await ai.models.generateContent({
+    const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: fullPrompt
+      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }]
     });
     
-    const responseText = result.text;
+    // Extraer texto de la respuesta (igual que en la app)
+    let responseText = '';
+    if (typeof response.text === 'function') {
+      responseText = await response.text();
+    } else if (typeof response.text === 'string') {
+      responseText = response.text;
+    } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+      responseText = response.candidates[0].content.parts[0].text;
+    } else {
+      throw new Error('No se pudo extraer el texto de la respuesta');
+    }
 
     const currentLimitData = rateLimits.get(userId);
     const remainingRequests = limit - currentLimitData.count;
