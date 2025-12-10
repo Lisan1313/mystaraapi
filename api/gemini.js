@@ -142,12 +142,11 @@ Responde como Mystara.
     `.trim();
 
     // Llamar a Gemini con la nueva librería
-    const ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY
-    });
+    // El cliente toma la API key automáticamente de process.env.GEMINI_API_KEY
+    const ai = new GoogleGenAI({});
 
     const result = await ai.models.generateContent({
-      model: 'gemini-1.5-pro',
+      model: 'gemini-2.5-flash',
       contents: fullPrompt
     });
     
