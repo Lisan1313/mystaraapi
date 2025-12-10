@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
 // Rate limiting: userId → {count, resetTime}
 const rateLimits = new Map();
@@ -141,12 +141,17 @@ Responde como Mystara.
 
     `.trim();
 
-    // Llamar a Gemini
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+    // Llamar a Gemini con la nueva librería
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY
+    });
 
-    const result = await model.generateContent(fullPrompt);
-    const responseText = result.response.text();
+    const result = await ai.models.generateContent({
+      model: 'gemini-1.5-pro',
+      contents: fullPrompt
+    });
+    
+    const responseText = result.text;
 
     const currentLimitData = rateLimits.get(userId);
     const remainingRequests = limit - currentLimitData.count;
