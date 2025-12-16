@@ -4,7 +4,6 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 export const runtime = 'edge';
 
 // Rate limiting: userId → {count, resetTime}
-// En Edge Runtime, esto se mantiene en memoria durante la ejecución
 const rateLimits = new Map();
 
 // Límites por minuto
@@ -14,44 +13,6 @@ const RESET_INTERVAL = 60000; // 60 segundos
 
 // Contador global de requests para logs
 let globalRequestNumber = 0;
-
-// Helper para crear respuesta JSON
-function jsonResponse(data, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
-}
-
-// Helper para crear respuesta de streaming
-function createStreamResponse(stream) {
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  });
-}
-
-// Función para convertir el stream de Gemini a formato SSE (Server-Sent Events)
-async function* geminiStreamToSSE(geminiStream) {
-  for await (const chunk of geminiStream) {
-    const text = chunk.text();
-    if (text) {
-      yield `data: ${JSON.stringify({ text })}\n\n`;
-    }
-  }
-  yield `data: [DONE]\n\n`;
-}
 
 export default async function handler(request) {
   // Manejar CORS preflight
@@ -67,7 +28,16 @@ export default async function handler(request) {
   }
 
   if (request.method !== 'POST') {
-    return jsonResponse({ error: 'Método no permitido' }, 405);
+    return new Response(
+      JSON.stringify({ error: 'Método no permitido' }),
+      {
+        status: 405,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      }
+    );
   }
 
   try {
@@ -75,11 +45,29 @@ export default async function handler(request) {
     const { userMessage, context, userId, isPremium } = body;
 
     if (!userMessage || userMessage.length > 2000) {
-      return jsonResponse({ error: 'Mensaje inválido' }, 400);
+      return new Response(
+        JSON.stringify({ error: 'Mensaje inválido' }),
+        {
+          status: 400,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        }
+      );
     }
 
     if (!userId) {
-      return jsonResponse({ error: 'User ID requerido' }, 400);
+      return new Response(
+        JSON.stringify({ error: 'User ID requerido' }),
+        {
+          status: 400,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        }
+      );
     }
 
     // Validar isPremium (debe ser boolean)
@@ -114,13 +102,22 @@ export default async function handler(request) {
           currentCount: userLimit.count
         }));
 
-        return jsonResponse({
-          error: 'Límite alcanzado',
-          mensaje: userIsPremium 
-            ? 'Has alcanzado tu límite de consultas por minuto. Como usuario premium, puedes hacer hasta 100 consultas por minuto. Intenta de nuevo en unos momentos. ✨'
-            : 'Has alcanzado tu límite de consultas por minuto. Puedes hacer hasta 10 consultas por minuto. Considera actualizar a premium para obtener más consultas. ✨',
-          resetIn
-        }, 429);
+        return new Response(
+          JSON.stringify({
+            error: 'Límite alcanzado',
+            mensaje: userIsPremium 
+              ? 'Has alcanzado tu límite de consultas por minuto. Como usuario premium, puedes hacer hasta 100 consultas por minuto. Intenta de nuevo en unos momentos. ✨'
+              : 'Has alcanzado tu límite de consultas por minuto. Puedes hacer hasta 10 consultas por minuto. Considera actualizar a premium para obtener más consultas. ✨',
+            resetIn
+          }),
+          {
+            status: 429,
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+            },
+          }
+        );
       }
 
       // Incrementar contador
@@ -159,8 +156,7 @@ export default async function handler(request) {
     ];
     const lowerMessage = userMessage.toLowerCase();
     if (BLOCKED_PHRASES.some(phrase => lowerMessage.includes(phrase))) {
-      // Para respuestas bloqueadas, también usar streaming
-      const blockedResponse = new ReadableStream({
+      const blockedStream = new ReadableStream({
         start(controller) {
           const encoder = new TextEncoder();
           const data = JSON.stringify({ text: 'Solo puedo ayudarte con tarot y rituales ✨' });
@@ -169,7 +165,15 @@ export default async function handler(request) {
           controller.close();
         }
       });
-      return createStreamResponse(blockedResponse);
+      
+      return new Response(blockedStream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
     }
 
     // System prompt fijo
@@ -208,10 +212,19 @@ Responde como Mystara.
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.error('GEMINI_API_KEY no está configurada');
-      return jsonResponse({
-        error: 'Error de configuración',
-        message: 'Por favor, contacta al administrador.'
-      }, 500);
+      return new Response(
+        JSON.stringify({
+          error: 'Error de configuración',
+          message: 'Por favor, contacta al administrador.'
+        }),
+        {
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          },
+        }
+      );
     }
 
     // Llamar a Gemini con streaming
@@ -228,16 +241,14 @@ Responde como Mystara.
     const result = await model.generateContentStream(fullPrompt);
     const stream = result.stream;
 
-    // Convertir el stream de Gemini a formato SSE
+    // Convertir el stream de Gemini a formato SSE (Server-Sent Events)
     const encoder = new TextEncoder();
     const readableStream = new ReadableStream({
       async start(controller) {
         try {
-          let fullText = '';
           for await (const chunk of stream) {
             const chunkText = chunk.text();
             if (chunkText) {
-              fullText += chunkText;
               // Enviar cada chunk como evento SSE
               const data = JSON.stringify({ text: chunkText });
               controller.enqueue(encoder.encode(`data: ${data}\n\n`));
@@ -269,13 +280,30 @@ Responde como Mystara.
       }
     });
 
-    return createStreamResponse(readableStream);
+    // Retornar el stream directamente con Response
+    return new Response(readableStream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
 
   } catch (error) {
     console.error('Error en Gemini API:', error);
-    return jsonResponse({
-      error: 'Error al conectar con la guía espiritual',
-      message: 'Por favor, intenta de nuevo.'
-    }, 500);
+    return new Response(
+      JSON.stringify({
+        error: 'Error al conectar con la guía espiritual',
+        message: 'Por favor, intenta de nuevo.'
+      }),
+      {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      }
+    );
   }
 }
