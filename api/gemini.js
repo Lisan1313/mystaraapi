@@ -242,6 +242,7 @@ Responde como Mystara.
     const stream = result.stream;
 
     // Convertir el stream de Gemini a formato SSE (Server-Sent Events)
+    // Compatible 100% con Edge Runtime
     const encoder = new TextEncoder();
     const readableStream = new ReadableStream({
       async start(controller) {
@@ -268,25 +269,38 @@ Responde como Mystara.
           // Señal de finalización
           controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           controller.close();
-        } catch (error) {
-          console.error('Error en el stream:', error);
-          const errorData = JSON.stringify({
-            error: 'Error al generar la respuesta',
-            message: 'Por favor, intenta de nuevo.'
-          });
-          controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
+        } catch (streamError) {
+          console.error('Error en el stream:', streamError);
+          try {
+            const errorData = JSON.stringify({
+              error: 'Error al generar la respuesta',
+              message: 'Por favor, intenta de nuevo.'
+            });
+            controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          } catch (closeError) {
+            console.error('Error al cerrar stream:', closeError);
+          }
           controller.close();
         }
+      },
+      cancel() {
+        // Manejar cancelación del stream
+        console.log('Stream cancelado por el cliente');
       }
     });
 
-    // Retornar el stream directamente con Response
+    // Retornar el stream directamente con Response estándar (Edge Runtime compatible)
     return new Response(readableStream, {
+      status: 200,
       headers: {
         'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
         'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
       },
     });
 
