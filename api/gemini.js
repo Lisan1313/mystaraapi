@@ -42,9 +42,9 @@ export default async function handler(request) {
 
   try {
     const body = await request.json();
-    const { userMessage, context, userId, isPremium } = body;
+    const { message, context, userId, isPremium } = body;
 
-    if (!userMessage || userMessage.length > 2000) {
+    if (!message || message.length > 2000) {
       return new Response(
         JSON.stringify({ error: 'Mensaje inválido' }),
         {
@@ -94,7 +94,7 @@ export default async function handler(request) {
         console.log(JSON.stringify({
           timestamp: new Date().toISOString(),
           userId,
-          messageLength: userMessage.length,
+          messageLength: message.length,
           isPremium: userIsPremium,
           requestNumber: globalRequestNumber,
           event: 'RATE_LIMIT_EXCEEDED',
@@ -141,7 +141,7 @@ export default async function handler(request) {
     console.log(JSON.stringify({
       timestamp: new Date().toISOString(),
       userId,
-      messageLength: userMessage.length,
+      messageLength: message.length,
       isPremium: userIsPremium,
       requestNumber: globalRequestNumber,
       event: 'REQUEST_PROCESSED',
@@ -154,7 +154,7 @@ export default async function handler(request) {
       'ignore', 'forget', 'bypass', 'jailbreak',
       'instrucciones anteriores', 'system prompt'
     ];
-    const lowerMessage = userMessage.toLowerCase();
+    const lowerMessage = message.toLowerCase();
     if (BLOCKED_PHRASES.some(phrase => lowerMessage.includes(phrase))) {
       const blockedStream = new ReadableStream({
         start(controller) {
@@ -202,7 +202,7 @@ ${SYSTEM_PROMPT}
 
 CONTEXTO: ${JSON.stringify(context, null, 2)}
 
-PREGUNTA: ${userMessage}
+PREGUNTA: ${message}
 
 Responde como Mystara.
 
