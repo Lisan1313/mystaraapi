@@ -1,8 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Configurar Edge Runtime
-export const runtime = 'edge';
-
 // Rate limiting: userId → {count, resetTime}
 const rateLimits = new Map();
 
@@ -14,60 +11,25 @@ const RESET_INTERVAL = 60000; // 60 segundos
 // Contador global de requests para logs
 let globalRequestNumber = 0;
 
-export default async function handler(request) {
+export default async function handler(req, res) {
   // Manejar CORS preflight
-  if (request.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      },
-    });
+  if (req.method === 'OPTIONS') {
+    return res.status(200).json({});
   }
 
-  if (request.method !== 'POST') {
-    return new Response(
-      JSON.stringify({ error: 'Método no permitido' }),
-      {
-        status: 405,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-      }
-    );
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Método no permitido' });
   }
 
   try {
-    const body = await request.json();
-    const { userMessage, context, userId, isPremium } = body;
+    const { userMessage, context, userId, isPremium } = req.body;
 
     if (!userMessage || userMessage.length > 2000) {
-      return new Response(
-        JSON.stringify({ error: 'Mensaje inválido' }),
-        {
-          status: 400,
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-          },
-        }
-      );
+      return res.status(400).json({ error: 'Mensaje inválido' });
     }
 
     if (!userId) {
-      return new Response(
-        JSON.stringify({ error: 'User ID requerido' }),
-        {
-          status: 400,
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-          },
-        }
-      );
+      return res.status(400).json({ error: 'User ID requerido' });
     }
 
     // Validar isPremium (debe ser boolean)
@@ -102,22 +64,13 @@ export default async function handler(request) {
           currentCount: userLimit.count
         }));
 
-        return new Response(
-          JSON.stringify({
-            error: 'Límite alcanzado',
-            mensaje: userIsPremium 
-              ? 'Has alcanzado tu límite de consultas por minuto. Como usuario premium, puedes hacer hasta 100 consultas por minuto. Intenta de nuevo en unos momentos. ✨'
-              : 'Has alcanzado tu límite de consultas por minuto. Puedes hacer hasta 10 consultas por minuto. Considera actualizar a premium para obtener más consultas. ✨',
-            resetIn
-          }),
-          {
-            status: 429,
-            headers: {
-              'Content-Type': 'application/json',
-              'Access-Control-Allow-Origin': '*',
-            },
-          }
-        );
+        return res.status(429).json({
+          error: 'Límite alcanzado',
+          mensaje: userIsPremium 
+            ? 'Has alcanzado tu límite de consultas por minuto. Como usuario premium, puedes hacer hasta 100 consultas por minuto. Intenta de nuevo en unos momentos. ✨'
+            : 'Has alcanzado tu límite de consultas por minuto. Puedes hacer hasta 10 consultas por minuto. Considera actualizar a premium para obtener más consultas. ✨',
+          resetIn
+        });
       }
 
       // Incrementar contador
@@ -156,23 +109,8 @@ export default async function handler(request) {
     ];
     const lowerMessage = userMessage.toLowerCase();
     if (BLOCKED_PHRASES.some(phrase => lowerMessage.includes(phrase))) {
-      const blockedStream = new ReadableStream({
-        start(controller) {
-          const encoder = new TextEncoder();
-          const data = JSON.stringify({ text: 'Solo puedo ayudarte con tarot y rituales ✨' });
-          controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-          controller.close();
-        }
-      });
-      
-      return new Response(blockedStream, {
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive',
-          'Access-Control-Allow-Origin': '*',
-        },
+      return res.json({
+        response: 'Solo puedo ayudarte con tarot y rituales ✨'
       });
     }
 
@@ -212,22 +150,13 @@ Responde como Mystara.
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       console.error('GEMINI_API_KEY no está configurada');
-      return new Response(
-        JSON.stringify({
-          error: 'Error de configuración',
-          message: 'Por favor, contacta al administrador.'
-        }),
-        {
-          status: 500,
-          headers: {
-            'Content-Type': 'application/json',
-            'Access-Control-Allow-Origin': '*',
-          },
-        }
-      );
+      return res.status(500).json({
+        error: 'Error de configuración',
+        message: 'Por favor, contacta al administrador.'
+      });
     }
 
-    // Llamar a Gemini con streaming
+    // Llamar a Gemini
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ 
       model: 'gemini-1.5-flash',
@@ -237,87 +166,23 @@ Responde como Mystara.
       }
     });
 
-    // Generar contenido con streaming
-    const result = await model.generateContentStream(fullPrompt);
-    const stream = result.stream;
+    const result = await model.generateContent(fullPrompt);
+    const responseText = result.response.text();
 
-    // Convertir el stream de Gemini a formato SSE (Server-Sent Events)
-    // Compatible 100% con Edge Runtime
-    const encoder = new TextEncoder();
-    const readableStream = new ReadableStream({
-      async start(controller) {
-        try {
-          for await (const chunk of stream) {
-            const chunkText = chunk.text();
-            if (chunkText) {
-              // Enviar cada chunk como evento SSE
-              const data = JSON.stringify({ text: chunkText });
-              controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-            }
-          }
-          
-          // Enviar metadata final con remainingRequests
-          const currentLimitData = rateLimits.get(userId);
-          const remainingRequests = limit - currentLimitData.count;
-          const metadata = JSON.stringify({
-            done: true,
-            remainingRequests: remainingRequests >= 0 ? remainingRequests : 0,
-            isPremium: userIsPremium
-          });
-          controller.enqueue(encoder.encode(`data: ${metadata}\n\n`));
-          
-          // Señal de finalización
-          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-          controller.close();
-        } catch (streamError) {
-          console.error('Error en el stream:', streamError);
-          try {
-            const errorData = JSON.stringify({
-              error: 'Error al generar la respuesta',
-              message: 'Por favor, intenta de nuevo.'
-            });
-            controller.enqueue(encoder.encode(`data: ${errorData}\n\n`));
-            controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-          } catch (closeError) {
-            console.error('Error al cerrar stream:', closeError);
-          }
-          controller.close();
-        }
-      },
-      cancel() {
-        // Manejar cancelación del stream
-        console.log('Stream cancelado por el cliente');
-      }
-    });
+    const currentLimitData = rateLimits.get(userId);
+    const remainingRequests = limit - currentLimitData.count;
 
-    // Retornar el stream directamente con Response estándar (Edge Runtime compatible)
-    return new Response(readableStream, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      },
+    return res.status(200).json({
+      response: responseText,
+      remainingRequests: remainingRequests >= 0 ? remainingRequests : 0,
+      isPremium: userIsPremium
     });
 
   } catch (error) {
     console.error('Error en Gemini API:', error);
-    return new Response(
-      JSON.stringify({
-        error: 'Error al conectar con la guía espiritual',
-        message: 'Por favor, intenta de nuevo.'
-      }),
-      {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-      }
-    );
+    return res.status(500).json({
+      error: 'Error al conectar con la guía espiritual',
+      message: 'Por favor, intenta de nuevo.'
+    });
   }
 }
