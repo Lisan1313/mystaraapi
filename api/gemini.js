@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
 // Rate limiting: userId → {count, resetTime}
 const rateLimits = new Map();
@@ -146,28 +146,33 @@ Responde como Mystara.
 
     `.trim();
 
-    // Verificar que existe la API key
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.error('GEMINI_API_KEY no está configurada');
-      return res.status(500).json({
-        error: 'Error de configuración',
-        message: 'Por favor, contacta al administrador.'
-      });
-    }
-
-    // Llamar a Gemini
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ 
-      model: 'gemini-1.5-flash',
-      generationConfig: {
-        maxOutputTokens: 500,
-        temperature: 0.7,
-      }
+    // Llamar a Gemini con la nueva librería (igual que en la app)
+    const ai = new GoogleGenAI({ 
+      apiKey: process.env.GEMINI_API_KEY 
     });
 
-    const result = await model.generateContent(fullPrompt);
-    const responseText = result.response.text();
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+      generationConfig: {
+        maxOutputTokens: 150, // Ultra-reducido para respuestas rápidas
+        temperature: 0.6, // Más determinista = más rápido
+        topP: 0.8,
+        topK: 25,
+      }
+    });
+    
+    // Extraer texto de la respuesta (igual que en la app)
+    let responseText = '';
+    if (typeof response.text === 'function') {
+      responseText = await response.text();
+    } else if (typeof response.text === 'string') {
+      responseText = response.text;
+    } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+      responseText = response.candidates[0].content.parts[0].text;
+    } else {
+      throw new Error('No se pudo extraer el texto de la respuesta');
+    }
 
     const currentLimitData = rateLimits.get(userId);
     const remainingRequests = limit - currentLimitData.count;
