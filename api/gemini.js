@@ -146,6 +146,15 @@ Responde como Mystara.
 
     `.trim();
 
+    // Verificar que la API key esté configurada
+    if (!process.env.GEMINI_API_KEY) {
+      console.error('GEMINI_API_KEY no está configurada');
+      return res.status(500).json({
+        error: 'Error de configuración del servidor',
+        message: 'Por favor, intenta de nuevo.'
+      });
+    }
+
     // Configurar headers para streaming SSE
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -198,33 +207,62 @@ Responde como Mystara.
 
     } catch (geminiError) {
       console.error('Error en Gemini API:', geminiError);
+      console.error('Error details:', {
+        message: geminiError.message,
+        stack: geminiError.stack,
+        name: geminiError.name
+      });
       
       // Enviar error en formato SSE
-      res.write(`data: ${JSON.stringify({ 
-        error: 'Error al conectar con la guía espiritual',
-        message: geminiError.message || 'Por favor, intenta de nuevo.'
-      })}\n\n`);
-      res.write('data: [DONE]\n\n');
-      res.end();
+      try {
+        res.write(`data: ${JSON.stringify({ 
+          error: 'Error al conectar con la guía espiritual',
+          message: geminiError.message || 'Por favor, intenta de nuevo.'
+        })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      } catch (writeError) {
+        console.error('Error al escribir respuesta SSE:', writeError);
+        // Si ya se enviaron headers, intentar cerrar la conexión
+        try {
+          res.end();
+        } catch (e) {
+          // Ignorar errores al cerrar
+        }
+      }
     }
 
   } catch (error) {
     console.error('Error en handler:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
     
     // Si los headers ya fueron enviados, intentar enviar error en formato SSE
     if (!res.headersSent) {
       return res.status(500).json({
         error: 'Error al conectar con la guía espiritual',
-        message: 'Por favor, intenta de nuevo.'
+        message: error.message || 'Por favor, intenta de nuevo.'
       });
     } else {
       // Si ya se enviaron headers, enviar error en formato SSE
-      res.write(`data: ${JSON.stringify({ 
-        error: 'Error al conectar con la guía espiritual',
-        message: error.message || 'Por favor, intenta de nuevo.'
-      })}\n\n`);
-      res.write('data: [DONE]\n\n');
-      res.end();
+      try {
+        res.write(`data: ${JSON.stringify({ 
+          error: 'Error al conectar con la guía espiritual',
+          message: error.message || 'Por favor, intenta de nuevo.'
+        })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      } catch (writeError) {
+        console.error('Error al escribir respuesta SSE de error:', writeError);
+        try {
+          res.end();
+        } catch (e) {
+          // Ignorar errores al cerrar
+        }
+      }
     }
   }
 }
