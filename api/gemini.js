@@ -152,7 +152,7 @@ Responde como Mystara.
     });
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
       contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
       generationConfig: {
         maxOutputTokens: 150, // Ultra-reducido para respuestas rápidas
