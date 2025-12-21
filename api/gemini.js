@@ -146,48 +146,85 @@ Responde como Mystara.
 
     `.trim();
 
-    // Llamar a Gemini con la nueva librería (igual que en la app)
+    // Configurar headers para streaming SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Desactivar buffering de Nginx
+
+    // Llamar a Gemini con la nueva librería (usando gemini-1.5-flash que es más estable)
     const ai = new GoogleGenAI({ 
       apiKey: process.env.GEMINI_API_KEY 
     });
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-flash',
-      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
-      generationConfig: {
-        maxOutputTokens: 150, // Ultra-reducido para respuestas rápidas
-        temperature: 0.6, // Más determinista = más rápido
-        topP: 0.8,
-        topK: 25,
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-1.5-flash', // Cambiado a 1.5-flash que es más estable
+        contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+        generationConfig: {
+          maxOutputTokens: 500, // Aumentado para respuestas más completas
+          temperature: 0.7,
+          topP: 0.8,
+          topK: 25,
+        }
+      });
+      
+      // Extraer texto de la respuesta
+      let responseText = '';
+      if (typeof response.text === 'function') {
+        responseText = await response.text();
+      } else if (typeof response.text === 'string') {
+        responseText = response.text;
+      } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+        responseText = response.candidates[0].content.parts[0].text;
+      } else {
+        throw new Error('No se pudo extraer el texto de la respuesta');
       }
-    });
-    
-    // Extraer texto de la respuesta (igual que en la app)
-    let responseText = '';
-    if (typeof response.text === 'function') {
-      responseText = await response.text();
-    } else if (typeof response.text === 'string') {
-      responseText = response.text;
-    } else if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
-      responseText = response.candidates[0].content.parts[0].text;
-    } else {
-      throw new Error('No se pudo extraer el texto de la respuesta');
+
+      // Enviar respuesta en formato SSE (streaming)
+      // Dividir el texto en chunks para simular streaming
+      const chunkSize = 20; // Caracteres por chunk
+      for (let i = 0; i < responseText.length; i += chunkSize) {
+        const chunk = responseText.slice(i, i + chunkSize);
+        res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
+        
+        // Pequeña pausa para simular streaming real
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+
+      // Enviar señal de finalización
+      res.write('data: [DONE]\n\n');
+      res.end();
+
+    } catch (geminiError) {
+      console.error('Error en Gemini API:', geminiError);
+      
+      // Enviar error en formato SSE
+      res.write(`data: ${JSON.stringify({ 
+        error: 'Error al conectar con la guía espiritual',
+        message: geminiError.message || 'Por favor, intenta de nuevo.'
+      })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
     }
 
-    const currentLimitData = rateLimits.get(userId);
-    const remainingRequests = limit - currentLimitData.count;
-
-    return res.status(200).json({
-      response: responseText,
-      remainingRequests: remainingRequests >= 0 ? remainingRequests : 0,
-      isPremium: userIsPremium
-    });
-
   } catch (error) {
-    console.error('Error en Gemini API:', error);
-    return res.status(500).json({
-      error: 'Error al conectar con la guía espiritual',
-      message: 'Por favor, intenta de nuevo.'
-    });
+    console.error('Error en handler:', error);
+    
+    // Si los headers ya fueron enviados, intentar enviar error en formato SSE
+    if (!res.headersSent) {
+      return res.status(500).json({
+        error: 'Error al conectar con la guía espiritual',
+        message: 'Por favor, intenta de nuevo.'
+      });
+    } else {
+      // Si ya se enviaron headers, enviar error en formato SSE
+      res.write(`data: ${JSON.stringify({ 
+        error: 'Error al conectar con la guía espiritual',
+        message: error.message || 'Por favor, intenta de nuevo.'
+      })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
   }
 }
