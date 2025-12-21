@@ -44,8 +44,10 @@ export default async function handler(req, res) {
   res.setHeader('X-Accel-Buffering', 'no');
   res.setHeader('Access-Control-Allow-Origin', '*');
   
-  // Enviar headers inmediatamente
-  res.flushHeaders();
+  // Enviar headers inmediatamente (si está disponible)
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
 
   try {
     const { userMessage, context, userId, isPremium } = req.body;
