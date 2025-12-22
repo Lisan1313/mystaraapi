@@ -13,14 +13,29 @@ let globalRequestNumber = 0;
 
 // Función helper para enviar respuesta en formato SSE
 function sendSSE(res, data) {
-  res.write(`data: ${JSON.stringify(data)}\n\n`);
+  try {
+    const message = typeof data === 'string' ? data : JSON.stringify(data);
+    res.write(`data: ${message}\n\n`);
+  } catch (error) {
+    console.error('Error al escribir SSE:', error);
+    throw error;
+  }
 }
 
 // Función helper para enviar error en formato SSE
 function sendSSEError(res, error, message) {
-  sendSSE(res, { error, message });
-  sendSSE(res, '[DONE]');
-  res.end();
+  try {
+    sendSSE(res, { error, message });
+    sendSSE(res, '[DONE]');
+    res.end();
+  } catch (writeError) {
+    console.error('Error al enviar error SSE:', writeError);
+    try {
+      res.end();
+    } catch (e) {
+      // Ignorar
+    }
+  }
 }
 
 export default async function handler(req, res) {
@@ -210,20 +225,33 @@ Responde como Mystara.
         throw new Error('No se pudo extraer el texto de la respuesta');
       }
 
+      console.log('✅ Respuesta de Gemini obtenida, longitud:', responseText.length);
+      
       // Enviar respuesta en formato SSE (streaming)
       // Dividir el texto en chunks para simular streaming
       const chunkSize = 20; // Caracteres por chunk
-      for (let i = 0; i < responseText.length; i += chunkSize) {
-        const chunk = responseText.slice(i, i + chunkSize);
-        sendSSE(res, { text: chunk });
+      let chunksSent = 0;
+      
+      try {
+        for (let i = 0; i < responseText.length; i += chunkSize) {
+          const chunk = responseText.slice(i, i + chunkSize);
+          sendSSE(res, { text: chunk });
+          chunksSent++;
+          
+          // Pequeña pausa para simular streaming real
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
         
-        // Pequeña pausa para simular streaming real
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
+        console.log(`✅ Enviados ${chunksSent} chunks, total caracteres: ${responseText.length}`);
 
-      // Enviar señal de finalización
-      sendSSE(res, '[DONE]');
-      res.end();
+        // Enviar señal de finalización
+        sendSSE(res, '[DONE]');
+        res.end();
+        console.log('✅ Stream completado y cerrado');
+      } catch (streamError) {
+        console.error('❌ Error al enviar stream:', streamError);
+        throw streamError;
+      }
 
     } catch (geminiError) {
       console.error('Error en Gemini API:', geminiError);
