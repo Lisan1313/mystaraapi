@@ -190,12 +190,14 @@ Responde como Mystara.
 
       console.log('✅ Respuesta de Gemini obtenida, longitud:', responseText.length);
       
-      // Configurar headers para streaming SSE
+      // Configurar headers para streaming SSE ANTES de escribir
+      res.status(200);
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
       res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Transfer-Encoding', 'chunked');
       
       // Enviar headers inmediatamente (si está disponible)
       if (typeof res.flushHeaders === 'function') {
