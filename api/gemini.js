@@ -188,7 +188,7 @@ Responde como Mystara.
 
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-1.5-flash', // Cambiado a 1.5-flash que es más estable
+        model: 'gemini-2.5-flash', // Usando el mismo modelo que funciona en la app
         contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
         generationConfig: {
           maxOutputTokens: 500, // Aumentado para respuestas más completas
