@@ -244,8 +244,8 @@ Responde como Mystara.
         
         console.log(`✅ Enviados ${chunksSent} chunks, total caracteres: ${responseText.length}`);
 
-        // Enviar señal de finalización
-        sendSSE(res, '[DONE]');
+        // Enviar señal de finalización (sin JSON.stringify para [DONE])
+        res.write('data: [DONE]\n\n');
         res.end();
         console.log('✅ Stream completado y cerrado');
       } catch (streamError) {
