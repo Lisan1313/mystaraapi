@@ -11,33 +11,6 @@ const RESET_INTERVAL = 60000; // 60 segundos
 // Contador global de requests para logs
 let globalRequestNumber = 0;
 
-// Función helper para enviar respuesta en formato SSE
-function sendSSE(res, data) {
-  try {
-    const message = typeof data === 'string' ? data : JSON.stringify(data);
-    res.write(`data: ${message}\n\n`);
-  } catch (error) {
-    console.error('Error al escribir SSE:', error);
-    throw error;
-  }
-}
-
-// Función helper para enviar error en formato SSE
-function sendSSEError(res, error, message) {
-  try {
-    sendSSE(res, { error, message });
-    res.write('data: [DONE]\n\n');
-    res.end();
-  } catch (writeError) {
-    console.error('Error al enviar error SSE:', writeError);
-    try {
-      res.end();
-    } catch (e) {
-      // Ignorar
-    }
-  }
-}
-
 export default async function handler(req, res) {
   // Manejar CORS preflight
   if (req.method === 'OPTIONS') {
@@ -51,29 +24,16 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Método no permitido' });
   }
 
-  // Configurar headers para streaming SSE ANTES de cualquier validación
-  // Esto asegura que siempre devolvamos un stream
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  
-  // Enviar headers inmediatamente (si está disponible)
-  if (typeof res.flushHeaders === 'function') {
-    res.flushHeaders();
-  }
-
   try {
     const { userMessage, context, userId, isPremium } = req.body;
 
-    // Validaciones - pero devolver en formato SSE
+    // Validaciones
     if (!userMessage || userMessage.length > 2000) {
-      return sendSSEError(res, 'Mensaje inválido', 'El mensaje debe tener entre 1 y 2000 caracteres.');
+      return res.status(400).json({ error: 'Mensaje inválido' });
     }
 
     if (!userId) {
-      return sendSSEError(res, 'User ID requerido', 'Se requiere un ID de usuario.');
+      return res.status(400).json({ error: 'User ID requerido' });
     }
 
     // Validar isPremium (debe ser boolean)
@@ -108,13 +68,13 @@ export default async function handler(req, res) {
           currentCount: userLimit.count
         }));
 
-        return sendSSEError(
-          res,
-          'Límite alcanzado',
-          userIsPremium 
+        return res.status(429).json({
+          error: 'Límite alcanzado',
+          mensaje: userIsPremium 
             ? `Has alcanzado tu límite de consultas por minuto. Como usuario premium, puedes hacer hasta 100 consultas por minuto. Intenta de nuevo en ${resetIn} segundos. ✨`
-            : `Has alcanzado tu límite de consultas por minuto. Puedes hacer hasta 10 consultas por minuto. Considera actualizar a premium para obtener más consultas. Intenta de nuevo en ${resetIn} segundos. ✨`
-        );
+            : `Has alcanzado tu límite de consultas por minuto. Puedes hacer hasta 10 consultas por minuto. Considera actualizar a premium para obtener más consultas. Intenta de nuevo en ${resetIn} segundos. ✨`,
+          resetIn
+        });
       }
 
       // Incrementar contador
@@ -153,15 +113,18 @@ export default async function handler(req, res) {
     ];
     const lowerMessage = userMessage.toLowerCase();
     if (BLOCKED_PHRASES.some(phrase => lowerMessage.includes(phrase))) {
-      sendSSE(res, { text: 'Solo puedo ayudarte con tarot y rituales ✨' });
-      sendSSE(res, '[DONE]');
-      return res.end();
+      return res.json({
+        response: 'Solo puedo ayudarte con tarot y rituales ✨'
+      });
     }
 
     // Verificar que la API key esté configurada
     if (!process.env.GEMINI_API_KEY) {
       console.error('GEMINI_API_KEY no está configurada');
-      return sendSSEError(res, 'Error de configuración del servidor', 'Por favor, intenta de nuevo.');
+      return res.status(500).json({
+        error: 'Error de configuración del servidor',
+        message: 'Por favor, intenta de nuevo.'
+      });
     }
 
     // System prompt fijo
@@ -227,6 +190,18 @@ Responde como Mystara.
 
       console.log('✅ Respuesta de Gemini obtenida, longitud:', responseText.length);
       
+      // Configurar headers para streaming SSE
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      
+      // Enviar headers inmediatamente (si está disponible)
+      if (typeof res.flushHeaders === 'function') {
+        res.flushHeaders();
+      }
+
       // Enviar respuesta en formato SSE (streaming)
       // Dividir el texto en chunks para simular streaming
       const chunkSize = 20; // Caracteres por chunk
@@ -235,7 +210,7 @@ Responde como Mystara.
       try {
         for (let i = 0; i < responseText.length; i += chunkSize) {
           const chunk = responseText.slice(i, i + chunkSize);
-          sendSSE(res, { text: chunk });
+          res.write(`data: ${JSON.stringify({ text: chunk })}\n\n`);
           chunksSent++;
           
           // Pequeña pausa para simular streaming real
@@ -244,7 +219,7 @@ Responde como Mystara.
         
         console.log(`✅ Enviados ${chunksSent} chunks, total caracteres: ${responseText.length}`);
 
-        // Enviar señal de finalización (sin JSON.stringify para [DONE])
+        // Enviar señal de finalización
         res.write('data: [DONE]\n\n');
         res.end();
         console.log('✅ Stream completado y cerrado');
@@ -261,11 +236,30 @@ Responde como Mystara.
         name: geminiError.name
       });
       
-      return sendSSEError(
-        res,
-        'Error al conectar con la guía espiritual',
-        geminiError.message || 'Por favor, intenta de nuevo.'
-      );
+      // Si los headers ya fueron enviados, enviar error en formato SSE
+      if (res.headersSent) {
+        try {
+          res.write(`data: ${JSON.stringify({ 
+            error: 'Error al conectar con la guía espiritual',
+            message: geminiError.message || 'Por favor, intenta de nuevo.'
+          })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+        } catch (writeError) {
+          console.error('Error al escribir respuesta SSE de error:', writeError);
+          try {
+            res.end();
+          } catch (e) {
+            // Ignorar
+          }
+        }
+      } else {
+        // Si no se enviaron headers, devolver JSON
+        return res.status(500).json({
+          error: 'Error al conectar con la guía espiritual',
+          message: geminiError.message || 'Por favor, intenta de nuevo.'
+        });
+      }
     }
 
   } catch (error) {
@@ -276,10 +270,28 @@ Responde como Mystara.
       name: error.name
     });
     
-    return sendSSEError(
-      res,
-      'Error al conectar con la guía espiritual',
-      error.message || 'Por favor, intenta de nuevo.'
-    );
+    // Si los headers ya fueron enviados, enviar error en formato SSE
+    if (res.headersSent) {
+      try {
+        res.write(`data: ${JSON.stringify({ 
+          error: 'Error al conectar con la guía espiritual',
+          message: error.message || 'Por favor, intenta de nuevo.'
+        })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      } catch (writeError) {
+        console.error('Error al escribir respuesta SSE de error:', writeError);
+        try {
+          res.end();
+        } catch (e) {
+          // Ignorar
+        }
+      }
+    } else {
+      return res.status(500).json({
+        error: 'Error al conectar con la guía espiritual',
+        message: error.message || 'Por favor, intenta de nuevo.'
+      });
+    }
   }
 }
