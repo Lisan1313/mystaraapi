@@ -196,7 +196,7 @@ Responde como Mystara.
 
     `.trim();
 
-    // Llamar a Gemini con la nueva librería (usando gemini-1.5-flash que es más estable)
+    // Llamar a Gemini con la nueva librería (usando gemini-2.5-flash)
     const ai = new GoogleGenAI({ 
       apiKey: process.env.GEMINI_API_KEY 
     });
