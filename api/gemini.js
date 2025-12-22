@@ -26,7 +26,7 @@ function sendSSE(res, data) {
 function sendSSEError(res, error, message) {
   try {
     sendSSE(res, { error, message });
-    sendSSE(res, '[DONE]');
+    res.write('data: [DONE]\n\n');
     res.end();
   } catch (writeError) {
     console.error('Error al enviar error SSE:', writeError);
